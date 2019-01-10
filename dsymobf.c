@@ -97,7 +97,8 @@ transform_dynstr_and_zero(elfobj_t *obj)
 		} else if ((sym_tab[i].st_info & 0xf) != STT_FUNC) {
 			memset(&str_tab[sym_tab[i].st_name], 0, strlen(&str_tab[sym_tab[i].st_name]));
 			continue;
-		} else if (!strcmp(&str_tab[sym_tab[i].st_name], "__libc_start_main")) {
+		} 
+		else if (!strcmp(&str_tab[sym_tab[i].st_name], "__libc_start_main")) {
 	        	printf("[*] hashing symbol: %s\n", &str_tab[sym_tab[i].st_name]);	
 	        	uint32_t hash = elf_hash(&str_tab[sym_tab[i].st_name]);
 			*(uint32_t*)&dynstr_backup[j++] = hash;
@@ -162,7 +163,7 @@ inject_constructor(elfobj_t *obj)
 			obj->phdr64[i].p_vaddr = 0xc000000 + old_size;
 			obj->phdr64[i].p_filesz = stub_size;
 			obj->phdr64[i].p_memsz = obj->phdr64[i].p_filesz;
-			obj->phdr64[i].p_flags = PF_R | PF_X;
+			obj->phdr64[i].p_flags = PF_R | PF_X | PF_W;
 			obj->phdr64[i].p_paddr = obj->phdr64[i].p_vaddr;
 			obj->phdr64[i].p_offset = old_size;
 		}
@@ -191,9 +192,9 @@ inject_constructor(elfobj_t *obj)
 	 * constructor so that we can find out where to hook the .init_array
 	 * function pointer to.
 	 */
-	if (elf_symbol_by_name(&ctor_obj, "resolve_got",
+	if (elf_symbol_by_name(&ctor_obj, "patch_got",
 	    &symbol) == false) {
-		printf("cannot find symbol \"resolve_got\"\n");
+		printf("cannot find symbol \"patch_got\"\n");
 		return false;
 	}
 

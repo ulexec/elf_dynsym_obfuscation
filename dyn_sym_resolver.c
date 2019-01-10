@@ -11,6 +11,8 @@
 uint32_t dynstr_buf[8192] __attribute__((section(".data"), aligned(8))) =
     { [0 ... 8191] = 0};
 unsigned long dynstr_size __attribute__((section(".data"))) = {0};
+unsigned long g_image_base __attribute__((section(".data")));
+
 extern unsigned long get_rip_label;
 
 struct link_map {
@@ -156,36 +158,72 @@ unsigned long get_rip(void)
 }
 
 
-int resolve_got (int argc, char **argv) 
+
+void resolve_entry (void) 
 {
 	uint64_t image_base;
 	uint64_t *got;
 	struct link_map *l_map;
 	uint64_t symbol;
 	bool skip_entry = false;
+	uint64_t hash_num;
+	uint64_t o_rsp;
+	uint64_t o_rdi;
+	uint64_t o_rsi;
+	uint64_t o_rdx;
+	uint64_t o_rcx;
+	uint64_t o_r8;
+	uint64_t o_r9;
+	uint64_t o_ret;
+	__asm__ __volatile__(	"mov %%rsp, %0" : "=r"(o_rsp));
+	__asm__ __volatile__(	"mov %%rdi, %0" : "=r"(o_rdi));
+	__asm__ __volatile__(	"mov %%rsi, %0" : "=r"(o_rsi));
+	__asm__ __volatile__(	"mov %%rdx, %0" : "=r"(o_rdx));
+	__asm__ __volatile__(	"mov %%rcx, %0" : "=r"(o_rcx));
+	__asm__ __volatile__(	"mov %%r8, %0" : "=r"(o_r8));
+	__asm__ __volatile__(	"mov %%r9, %0" : "=r"(o_r9));
+	__asm__ __volatile__(	"mov %rbp, %rsp");
+	__asm__ __volatile__(	"pop %rdi");
+	__asm__ __volatile__(	"pop %%rax	\n"
+				"mov %%rax, %0" : "=r"(l_map));	
+	__asm__ __volatile__(	"pop %%rax	\n"
+				"mov %%rax, %0" : "=r"(hash_num));	
+	__asm__ __volatile__(	"pop %%rax	\n"
+				"mov %%rax, %0" : "=r"(o_ret));	
+	__asm__ __volatile__(	"mov %0, %%rsp" :: "r"(o_rsp));
+
+	got = get_got(g_image_base);
+	
+	do {
+		uint64_t *addr = PIC_RESOLVE_ADDR(dynstr_buf);
+		symbol = resolve_symbol(l_map, *(uint32_t*)((uint32_t*)addr+hash_num));
+		l_map = l_map->l_next;
+	} while(symbol == -1);
+	*(uint64_t*)&got[3+hash_num] = symbol;
+
+	__asm__ __volatile__(	"mov %0, %%rax	\n"
+				"push %%rax" :: "r"(o_ret));
+	__asm__ __volatile__(	"mov %0, %%rdi" :: "r"(o_rdi));
+	__asm__ __volatile__(	"mov %0, %%rsi" :: "r"(o_rsi));
+	__asm__ __volatile__(	"mov %0, %%rdx" :: "r"(o_rdx));
+	__asm__ __volatile__(	"mov %0, %%rcx" :: "r"(o_rcx));
+	__asm__ __volatile__(	"mov %0, %%r8"  :: "r"(o_r8));
+	__asm__ __volatile__(	"mov %0, %%r9"  :: "r"(o_r9));
+	__asm__ __volatile__(	"jmp %0" ::  "r"(symbol));
+}
+
+int patch_got(int argc, char ** argv) 
+{
+	uint64_t image_base;
+	uint64_t *got;
 
 	if ((image_base = get_image_base_from_auxv(argv)) == -1) {
 		return -1;
 	}
-
+	g_image_base = image_base;	
 	got = get_got(image_base);
-	
-	for (int i = 0; i < dynstr_size; i++) {
-		l_map = (struct link_map*)got[1];
-		do {
-			uint64_t *addr = PIC_RESOLVE_ADDR(dynstr_buf);
-			if(*(uint32_t*)((uint32_t*)addr + i) == 0){
-				skip_entry = true;
-				break;
-			}
-			symbol = resolve_symbol(l_map, *(uint32_t*)((uint32_t*)addr+i));
-			l_map = l_map->l_next;
-		} while(symbol == -1);
-		if (skip_entry) {
-			skip_entry = false;
-			continue;
-		}
-		*(uint64_t*)&got[3+i] = symbol;
-	}
+	*(uint64_t*)&got[2] = PIC_RESOLVE_ADDR(resolve_entry);
+	return 0;
 }
+
 
