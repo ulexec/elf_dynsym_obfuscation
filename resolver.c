@@ -4,12 +4,11 @@
 #include <stdbool.h>
 #include <elf.h>
 
-#define PAGE_SIZE 		4096
-#define	PAGE_ALIGN(k) 		(((k)+((PAGE_SIZE)-1))&(~((PAGE_SIZE)-1)))
+#define PAGE_SIZE 		 4096
+#define	PAGE_ALIGN(k) 		 (((k)+((PAGE_SIZE)-1))&(~((PAGE_SIZE)-1)))
 #define PIC_RESOLVE_ADDR(target) (get_rip() - ((char *)&get_rip_label - (char *)target))
 
-uint32_t dynstr_buf[8192] __attribute__((section(".data"), aligned(8))) =
-    { [0 ... 8191] = 0};
+uint32_t dynstr_buf[8192] __attribute__((section(".data"), aligned(8))) = { [0 ... 8191] = 0};
 unsigned long dynstr_size __attribute__((section(".data"))) = {0};
 unsigned long g_image_base __attribute__((section(".data")));
 
@@ -19,7 +18,8 @@ struct link_map {
 	Elf64_Addr l_addr;
 	char * l_name;
 	Elf64_Dyn *l_ld;
-	struct link_map *l_next, *l_prev;
+	struct link_map *l_next;
+	struct link_map *l_prev;
 };
 
 uint32_t elf_hash(const unsigned char *name) 
@@ -28,8 +28,9 @@ uint32_t elf_hash(const unsigned char *name)
 	while (*name) {
 		h = (h << 4) + *name++;
 		g = h & 0xf0000000;
-		if (g)
+		if (g) {
 			h ^= g >> 24;
+		}
 		h &= ~g;
 	}
 	return h;
@@ -57,18 +58,17 @@ uint64_t lookup(uint32_t name_hash, uint32_t *hashtab, Elf64_Sym *symtab, uint8_
 	return -1;
 }
 
-
-
 uint64_t get_image_base_from_auxv(char **argv) 
 {
 	Elf64_auxv_t *auxv;
 
-	/* walk past all argv pointers */
+	/*skip all argv pointers */
 	while (*argv++ != NULL);
 
-	/* walk past all env pointers */
+	/*skip all env pointers */
 	while (*argv++ != NULL);
-
+	
+	/*iterating Auxv entries*/
 	while (*argv++ != NULL) {
 		auxv = (Elf64_auxv_t *)argv;
 		if( auxv->a_type == AT_PHDR) {
@@ -78,7 +78,7 @@ uint64_t get_image_base_from_auxv(char **argv)
 	return -1;
 }
 
-uint64_t resolve_symbol(struct link_map *l_map, uint32_t sym_hash) 
+uint64_t resolve_symbol_from_module(struct link_map *l_map, uint32_t sym_hash) 
 {
 	Elf64_Dyn *dynamic;
         Elf64_Sym *sym_table;
@@ -153,11 +153,8 @@ unsigned long get_rip(void)
 	"pop %%rax              \n"
 	"mov %%rax, %0" : "=r"(ret)
 	);
-
         return ret;
 }
-
-
 
 void resolve_entry (void) 
 {
@@ -175,6 +172,8 @@ void resolve_entry (void)
 	uint64_t o_r8;
 	uint64_t o_r9;
 	uint64_t o_ret;
+	
+	/*saving stack and argument context*/
 	__asm__ __volatile__(	"mov %%rsp, %0" : "=r"(o_rsp));
 	__asm__ __volatile__(	"mov %%rdi, %0" : "=r"(o_rdi));
 	__asm__ __volatile__(	"mov %%rsi, %0" : "=r"(o_rsi));
@@ -182,25 +181,32 @@ void resolve_entry (void)
 	__asm__ __volatile__(	"mov %%rcx, %0" : "=r"(o_rcx));
 	__asm__ __volatile__(	"mov %%r8, %0" : "=r"(o_r8));
 	__asm__ __volatile__(	"mov %%r9, %0" : "=r"(o_r9));
+	
+	/*restoring RTLD's arguments in stack*/
 	__asm__ __volatile__(	"mov %rbp, %rsp");
-	__asm__ __volatile__(	"pop %rdi");
 	__asm__ __volatile__(	"pop %%rax	\n"
+				"pop %%rax	\n"
 				"mov %%rax, %0" : "=r"(l_map));	
 	__asm__ __volatile__(	"pop %%rax	\n"
 				"mov %%rax, %0" : "=r"(hash_num));	
 	__asm__ __volatile__(	"pop %%rax	\n"
-				"mov %%rax, %0" : "=r"(o_ret));	
+				"mov %%rax, %0" : "=r"(o_ret));
+	
+	/*restoring original stack pointer*/
 	__asm__ __volatile__(	"mov %0, %%rsp" :: "r"(o_rsp));
 
 	got = get_got(g_image_base);
 	
 	do {
 		uint64_t *addr = PIC_RESOLVE_ADDR(dynstr_buf);
-		symbol = resolve_symbol(l_map, *(uint32_t*)((uint32_t*)addr+hash_num));
+		symbol = resolve_symbol_from_module(l_map, *(uint32_t*)((uint32_t*)addr+hash_num));
 		l_map = l_map->l_next;
 	} while(symbol == -1);
+	
+	/*resolving correspondent symbol GOT entry*/
 	*(uint64_t*)&got[3+hash_num] = symbol;
-
+	
+	/*jumping to resolve symbol with adequate arguments and return address*/
 	__asm__ __volatile__(	"mov %0, %%rax	\n"
 				"push %%rax" :: "r"(o_ret));
 	__asm__ __volatile__(	"mov %0, %%rdi" :: "r"(o_rdi));
@@ -222,6 +228,8 @@ int patch_got(int argc, char ** argv)
 	}
 	g_image_base = image_base;	
 	got = get_got(image_base);
+	
+	/*replacing RTLD resolver for our custom one at GOT[2]*/
 	*(uint64_t*)&got[2] = PIC_RESOLVE_ADDR(resolve_entry);
 	return 0;
 }
