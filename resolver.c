@@ -204,6 +204,9 @@ void resolve_entry (void)
 	} while(symbol == -1);
 	
 	/*resolving correspondent symbol GOT entry*/
+	/*This line can be deleted and will force the custom resolver to resolve
+	* an entry every time is called. Good for anti-analysis since the analyst
+	* would have to track each entry to know what symbol it holds :) */
 	*(uint64_t*)&got[3+hash_num] = symbol;
 	
 	/*jumping to resolve symbol with adequate arguments and return address*/
