@@ -269,6 +269,32 @@ inject_constructor(elfobj_t *obj)
 	ptr = elf_address_pointer(&ctor_obj, symbol.value);
 	memcpy(ptr, &dynstr_len, sizeof(unsigned long int));
 
+	/*zeroing out string table in egg*/
+	if (elf_section_by_name(&ctor_obj, ".strtab", &dynstr) == false) {
+		fprintf(stderr, "couldn't find .strtab section\n");
+		return false;
+	}
+
+	ptr = elf_offset_pointer(&ctor_obj, dynstr.offset);
+	if (ptr == NULL) {
+		fprintf(stderr, "Unable to locate offset: %#lx\n", dynstr.offset);
+		return false;
+	}
+	memset(ptr, 0, dynstr.size);
+
+	/*zeroing out section headers string table in egg*/
+	if (elf_section_by_name(&ctor_obj, ".shstrtab", &dynstr) == false) {
+		fprintf(stderr, "couldn't find .shstrtab section\n");
+		return false;
+	}
+
+	ptr = elf_offset_pointer(&ctor_obj, dynstr.offset);
+	if (ptr == NULL) {
+		fprintf(stderr, "Unable to locate offset: %#lx\n", dynstr.offset);
+		return false;
+	}
+	memset(ptr, 0, dynstr.size);
+
 	/*
 	 * Append 'egg' constructor code to the end of the target binary
 	 * the target binary has a PT_LOAD segment with corresponding offset
