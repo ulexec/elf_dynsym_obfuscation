@@ -22,6 +22,12 @@ struct link_map {
 	struct link_map *l_prev;
 };
 
+__attribute__((unused)) int _start(void)
+{
+
+	return 0;
+}
+
 uint32_t elf_hash(const unsigned char *name) 
 {
 	uint32_t h = 0, g;
@@ -86,25 +92,31 @@ uint64_t resolve_symbol_from_module(struct link_map *l_map, uint32_t sym_hash)
 	uint32_t *hash_table = 0;
 	uint64_t symbol_address = 0;
 	
+	/*
+	 * Points to dynamic segment of the shared library
+	 */
 	dynamic = l_map->l_ld;
 
+	/*
+	 * Locate .dynstr symbol table, hash lookup, and .dynstr string table
+	 */
 	while (dynamic->d_tag != DT_NULL) {
 		switch (dynamic->d_tag) {
-			case DT_HASH:
-				hash_table = (dynamic->d_un.d_ptr < l_map->l_addr) ? 
-					(uint32_t*)((uint8_t*)l_map->l_addr + dynamic->d_un.d_ptr):
-					(uint32_t*)dynamic->d_un.d_ptr;
-				break;
-			case DT_SYMTAB:
-				sym_table = (dynamic->d_un.d_ptr < l_map->l_addr) ? 
-					(Elf64_Sym*)((uint8_t*)l_map->l_addr + dynamic->d_un.d_ptr):
-					(Elf64_Sym*)dynamic->d_un.d_ptr;
-				break;
-			case DT_STRTAB:
-				str_table = ((uint64_t)dynamic->d_un.d_ptr < l_map->l_addr) ? 
-					(uint8_t*)((uint8_t*)l_map->l_addr + dynamic->d_un.d_ptr):
-					(uint8_t*)dynamic->d_un.d_ptr;
-				break;
+		case DT_HASH:
+			hash_table = (dynamic->d_un.d_ptr < l_map->l_addr) ? 
+			    (uint32_t*)((uint8_t*)l_map->l_addr + dynamic->d_un.d_ptr) :
+			    (uint32_t*)dynamic->d_un.d_ptr;
+			break;
+		case DT_SYMTAB:
+			sym_table = (dynamic->d_un.d_ptr < l_map->l_addr) ? 
+			    (Elf64_Sym*)((uint8_t*)l_map->l_addr + dynamic->d_un.d_ptr) :
+			    (Elf64_Sym*)dynamic->d_un.d_ptr;
+			break;
+		case DT_STRTAB:
+			str_table = ((uint64_t)dynamic->d_un.d_ptr < l_map->l_addr) ? 
+			    (uint8_t*)((uint8_t*)l_map->l_addr + dynamic->d_un.d_ptr) :
+			    (uint8_t*)dynamic->d_un.d_ptr;
+			break;
 		}
 		dynamic++;
 	}
@@ -114,6 +126,9 @@ uint64_t resolve_symbol_from_module(struct link_map *l_map, uint32_t sym_hash)
 	symbol_address = lookup(sym_hash, hash_table, sym_table, str_table);
 	symbol_address = symbol_address == -1 ? symbol_address : (uint64_t)((uint8_t*)symbol_address + l_map->l_addr);
 	if (symbol_address == l_map->l_addr) {
+		/*
+		 * When is this ever true?
+		 */
 		symbol_address = -1;
 	}
 	return symbol_address;
@@ -156,6 +171,12 @@ unsigned long get_rip(void)
         return ret;
 }
 
+/*
+ * Once the resolver is called the stack and argument context
+ * is already setup, since our resolver has replaced got[2]
+ * and control is being transferred there from PLT-0 just the
+ * same as if dl_runtime_resolve was being invoked.
+ */
 void resolve_entry (void) 
 {
 	uint64_t image_base;
@@ -195,11 +216,15 @@ void resolve_entry (void)
 	/*restoring original stack pointer*/
 	__asm__ __volatile__(	"mov %0, %%rsp" :: "r"(o_rsp));
 
+	/*
+	 * Locate the GOT via dynamic segment
+	 */
 	got = get_got(g_image_base);
-	
+
 	do {
-		uint64_t *addr = PIC_RESOLVE_ADDR(dynstr_buf);
-		symbol = resolve_symbol_from_module(l_map, *(uint32_t*)((uint32_t*)addr+hash_num));
+		uint64_t *addr = (uint64_t *)PIC_RESOLVE_ADDR(dynstr_buf);
+
+		symbol = resolve_symbol_from_module(l_map, *(uint32_t*)((uint32_t*)addr + hash_num));
 		l_map = l_map->l_next;
 	} while(symbol == -1);
 	
@@ -208,7 +233,7 @@ void resolve_entry (void)
 	* an entry every time is called. Good for anti-analysis since the analyst
 	* would have to track each entry to know what symbol it holds :) */
 	*(uint64_t*)&got[3+hash_num] = symbol;
-	
+
 	/*jumping to resolve symbol with adequate arguments and return address*/
 	__asm__ __volatile__(	"mov %0, %%rax	\n"
 				"push %%rax" :: "r"(o_ret));
@@ -218,7 +243,7 @@ void resolve_entry (void)
 	__asm__ __volatile__(	"mov %0, %%rcx" :: "r"(o_rcx));
 	__asm__ __volatile__(	"mov %0, %%r8"  :: "r"(o_r8));
 	__asm__ __volatile__(	"mov %0, %%r9"  :: "r"(o_r9));
-	__asm__ __volatile__(	"jmp %0" ::  "r"(symbol));
+	__asm__ __volatile__(	"jmpq *%0" ::  "r"(symbol));
 }
 
 int patch_got(int argc, char ** argv) 
